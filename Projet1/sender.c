@@ -43,7 +43,7 @@ int main(int argc, char *argv[]){
 	char *endptr;
 	port = strtold(argv[optind], &endptr);
 	if (errno != 0 || argv[optind] == endptr){
-		printf("Port invalide: %s\n", optarg);
+		printf("Port invalide: %s\n", argv[optind]);
 		return EXIT_FAILURE;
 	}
 	addres = argv[optind + 1];
