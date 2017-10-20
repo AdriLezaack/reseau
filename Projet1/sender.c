@@ -3,6 +3,9 @@
 #include <unistd.h>
 #include <string.h>
 #include "packet_interface.h"
+#include "real_address.h"
+#include "create_socket.h"
+#include "wait_for_client.h"
 
 int main(int argc, char *argv[]){
 	
