@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <errno.h>
 #include "packet_interface.h"
 #include "real_address.h"
 #include "create_socket.h"
@@ -37,8 +38,13 @@ int main(int argc, char *argv[]){
 				break;
 		}
 	}
-	
-	port = atoi(argv[optind]);
+	errno = 0;
+	char *endptr;
+	port = strtold(argv[optind], &endptr);
+	if (errno != 0 || argv[optind] == endptr){
+		printf("Port invalide: %s\n", optarg);
+		return EXIT_FAILURE;
+	}
 	addres = argv[optind + 1];
 	printf("Port: %d\n", port);
 	printf("Addres: %s\n", addres);
