@@ -8,7 +8,35 @@
 #include "create_socket.h"
 #include "wait_for_client.h"
 
-int main(int argc, char *argv[]){
+
+#include <sys/time.h>
+#include <sys/types.h>
+
+#define STDIN 0  // file descriptor for standard input
+
+int main2(void) {
+    struct timeval tv;
+    fd_set readfds;
+
+    tv.tv_sec = 2;
+    tv.tv_usec = 500000;
+
+    FD_ZERO(&readfds);
+    FD_SET(STDIN, &readfds);
+
+    // don't care about writefds and exceptfds:
+    select(STDIN+1, &readfds, NULL, NULL, &tv);
+
+    if (FD_ISSET(STDIN, &readfds))
+        printf("A key was pressed!\n");
+    else
+        printf("Timed out.\n");
+
+    return 0;
+} 
+
+
+int main(int argc, char *argv[]) {
 	
 	if (argc < 3){
 		printf("Erreur: trop peu d'arguments.\n");
@@ -62,6 +90,9 @@ int main(int argc, char *argv[]){
 		//f = STDIN_FILENO;
 	}
 	
+	uint8_t window = 1;
+	uint8_t seqnum = 0;
+	//TO DO Si pas de buffer, setter window a 0.
 	while(1){
 		char *buffer = "";
 		size_t len = 0;
@@ -79,11 +110,20 @@ int main(int argc, char *argv[]){
 				return EXIT_FAILURE;
 		}			
 		pkt_t *pkt = pkt_new();
-		pkt_set_payload(pkt, data, rd);
+		pkt_set_type(pkt, 1);
+		pkt_get_tr(0);
+		pkt_set_window(pkt, window);
+		pkt_set_seqnum(pkt, seqnum);
+		//pkt_set_length //Fait implicitement dans ce qui suit.
+		if (pkt_set_payload(pkt, data, rd) != PKT_OK){
+			pkt_set_tr(pkt, 1); //Tronquer le paquet
+		}	
 		free(data);
 	
 		pkt_encode(pkt, buffer, &len);
 		//write(sfd, buffer, len);
+		
+		seqnum ++;
 	}
 	
 	if (fclose(f) == -1){
