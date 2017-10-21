@@ -102,6 +102,10 @@ int sendfromstdin(int sfd){
 			fprintf(stderr, "sender(): Impossible d'envoyer le packet\n%s\n", strerror(errno));
 			return EXIT_FAILURE;
 		}
+		
+		if(pkt_get_length(pkt) == 0 && pkt_get_tr(pkt) == 0){
+			break; //Fin de la connexion.
+		}
 
 		seqnum = (seqnum+1)%256;
 		len = 1024;
@@ -109,33 +113,10 @@ int sendfromstdin(int sfd){
 	return EXIT_SUCCESS;
 }
 
-
-int main2(void) {
-    struct timeval tv;
-    fd_set readfds;
-
-    tv.tv_sec = 2;
-    tv.tv_usec = 500000;
-
-    FD_ZERO(&readfds);
-    FD_SET(STDIN, &readfds);
-
-    // don't care about writefds and exceptfds:
-    select(STDIN+1, &readfds, NULL, NULL, &tv);
-
-    if (FD_ISSET(STDIN, &readfds))
-        printf("A key was pressed!\n");
-    else
-        printf("Timed out.\n");
-
-    return 0;
-}
-
-
 int main(int argc, char *argv[]) {
 
 	if (argc < 3){
-		printf("Erreur: trop peu d'arguments.\n");
+		fprintf(stderr, "Erreur: trop peu d'arguments.\n");
 		return EXIT_FAILURE;
 	}
 
@@ -149,7 +130,7 @@ int main(int argc, char *argv[]) {
 			case 'f':
 				file = optarg;
 				if (argc < 5){
-					printf("Erreur: trop peu d'arguments.\n");
+					fprintf(stderr, "Erreur: trop peu d'arguments.\n");
 					return EXIT_FAILURE;
 				}
 				//~ printf("Option: %s\n", optarg);
@@ -168,11 +149,11 @@ int main(int argc, char *argv[]) {
 	char *endptr;
 	port = strtold(argv[optind + 1], &endptr);
 	if (errno != 0 || argv[optind] == endptr){
-		printf("Port invalide: %s\n", argv[optind]);
+		fprintf(stderr, "Port invalide: %s\n", argv[optind]);
 		return EXIT_FAILURE;
 	}
-	printf("Port: %d\n", port);
-	printf("Addres: %s\n", addres);
+	//~ printf("Port: %d\n", port);
+	//~ printf("Addres: %s\n", addres);
 
 	/* Resolve the hostname */
 	struct sockaddr_in6 addr;
@@ -195,14 +176,14 @@ int main(int argc, char *argv[]) {
 	if (file != NULL){
 		FILE *f = fopen(file, "rb");
 		if (f == NULL) {
-			printf("Erreur: impossible d'ouvrir le fichier de lecture.\n");
+			fprintf(stderr, "Erreur: impossible d'ouvrir le fichier de lecture.\n");
 			return EXIT_FAILURE;
 		}
 
 		sendfromFile(f,sfd);
 
 		if (fclose(f) == -1){
-			printf("Erreur fermeture du fichier de lecture.\n");
+			fprintf(stderr, "Erreur fermeture du fichier de lecture.\n");
 			return EXIT_FAILURE;
 		}
 	}

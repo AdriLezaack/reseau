@@ -43,6 +43,7 @@ int main(int argc, char *argv[]){
 				break;
 		}
 	}
+	//~ file = "output";
 	addres = argv[optind];
 	errno = 0;
 	char *endptr;
@@ -52,8 +53,8 @@ int main(int argc, char *argv[]){
 		return EXIT_FAILURE;
 	}
 
-	printf("Port: %d\n", port);
-	printf("Addres: %s\n", addres);
+	//~ printf("Port: %d\n", port);
+	//~ printf("Addres: %s\n", addres);
 
 	struct sockaddr_in6 addr;
 	const char *err = real_address(addres, &addr);
@@ -115,13 +116,16 @@ int main(int argc, char *argv[]){
 				//Si le type est 1...
 				if (pkt_get_seqnum(pkt) == seqnum){
 					//Si le packet a bien un seqnum attendu
+					printf("Length: %d.\n", pkt_get_length(pkt));
+					if (pkt_get_length(pkt) == 0){
+						break; //Fin de la connexion.
+					}
 					pkt_t *ack = pkt_new();
 					if (pkt_get_tr(pkt) == 0){
 						//Si le paquet a un payload...
 						int wr = -1;
 						if (f != NULL) {
 							wr = fwrite(pkt_get_payload(pkt), 1, pkt_get_length(pkt), f);
-
 						} else {
 							wr = write(STDOUT_FILENO, pkt_get_payload(pkt), pkt_get_length(pkt));
 						}
