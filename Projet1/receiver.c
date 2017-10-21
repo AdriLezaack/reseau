@@ -15,7 +15,7 @@
 int main(int argc, char *argv[]){
 
 	if (argc < 3){
-		printf("Erreur: trop peu d'arguments.\n");
+		fprintf(stderr,"Erreur: trop peu d'arguments.\n");
 		return EXIT_FAILURE;
 	}
 
@@ -28,18 +28,18 @@ int main(int argc, char *argv[]){
 		switch (opt) {
 			case 'f':
 				file = optarg;
-				printf("%s\n", optarg);
+				fprintf(stderr,"%s\n", optarg);
 				if (argc < 5){
-					printf("Erreur: trop peu d'arguments.\n");
+					fprintf(stderr,"Erreur: trop peu d'arguments.\n");
 					return EXIT_FAILURE;
 				}
 				// printf("Option: %s\n", optarg);
 				break;
 			case '?':
-				 printf("Pas d'option");
+				 fprintf(stderr,"Pas d'option");
 				break;
 			default:
-				 printf("Pas d'option 2");
+				 fprintf(stderr,"Pas d'option 2");
 				break;
 		}
 	}
@@ -49,7 +49,7 @@ int main(int argc, char *argv[]){
 	char *endptr;
 	port = strtold(argv[optind + 1], &endptr);
 	if (errno != 0 || argv[optind] == endptr){
-		printf("Port invalide: %s\n", argv[optind]);
+		fprintf(stderr,"Port invalide: %s\n", argv[optind]);
 		return EXIT_FAILURE;
 	}
 
@@ -77,7 +77,7 @@ int main(int argc, char *argv[]){
 	if (file != NULL){
 		f = fopen(file, "wb");
 		if (f == NULL) {
-			printf("Erreur: impossible d'ouvrir le fichier d'ecriture.\n");
+			fprintf(stderr,"Erreur: impossible d'ouvrir le fichier d'ecriture.\n");
 			return EXIT_FAILURE;
 		}
 	}
@@ -116,7 +116,7 @@ int main(int argc, char *argv[]){
 				//Si le type est 1...
 				if (pkt_get_seqnum(pkt) == seqnum){
 					//Si le packet a bien un seqnum attendu
-					printf("Length: %d.\n", pkt_get_length(pkt));
+					fprintf(stderr,"Length: %d.\n", pkt_get_length(pkt));
 					if (pkt_get_length(pkt) == 0){
 						break; //Fin de la connexion.
 					}
@@ -130,7 +130,7 @@ int main(int argc, char *argv[]){
 							wr = write(STDOUT_FILENO, pkt_get_payload(pkt), pkt_get_length(pkt));
 						}
 						if(wr < 0) {
-							printf("Erreur d'ecriture.\n");
+							fprintf(stderr,"Erreur d'ecriture.\n");
 							return EXIT_FAILURE;
 						}
 						//Envoit un ack
@@ -159,10 +159,12 @@ int main(int argc, char *argv[]){
 		lenbuffer = 1024;
 		seqnum = (seqnum+1)%256;
 	}
-
-	if (fclose(f) == -1){
-		printf("Erreur fermeture du fichier d'ecriture.\n");
-		return EXIT_FAILURE;
+	
+	if (f != NULL){
+		if (fclose(f) == -1){
+			fprintf(stderr,"Erreur fermeture du fichier d'ecriture.\n");
+			return EXIT_FAILURE;
+		}
 	}
 
 	return EXIT_SUCCESS;

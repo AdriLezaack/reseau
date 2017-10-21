@@ -14,105 +14,6 @@
 
 #define STDIN 0  // file descriptor for standard input
 
-
-int sendfromFile(FILE *f, int sfd){
-	uint8_t window = 1;
-	uint8_t seqnum = 0;
-	char data[512];
-	char* buffer = (char *) malloc(1024);
-	size_t len = 1024;
-	//TO DO Si pas de buffer, setter window a 0.
-	while(1){
-		int rd = -1;
-			rd = fread(data, 1, 512, f);
-		if (rd == -1){
-				printf("Erreur de lecture.\n");
-				return EXIT_FAILURE;
-		}
-
-		pkt_t *pkt = pkt_new();
-		pkt_set_type(pkt, 1);
-		pkt_set_tr(pkt,0);
-		pkt_set_window(pkt, window);
-		pkt_set_seqnum(pkt, seqnum);
-		//pkt_set_length //Fait implicitement dans ce qui suit.
-		if (pkt_set_payload(pkt, data, rd) != PKT_OK){
-			pkt_set_tr(pkt, 1); //Tronquer le paquet
-		}
-
-		pkt_encode(pkt, buffer, &len);
-
-		//write(sfd, buffer, len);
-		if(write(sfd, buffer,len)<0){
-			fprintf(stderr, "sender(): Impossible d'envoyer le packet\n%s\n", strerror(errno));
-			return EXIT_FAILURE;
-		}
-		seqnum ++;
-		len = 1024;
-	}
-	return EXIT_SUCCESS;
-}
-
-int sendfromstdin(int sfd){
-	struct timeval tv;
-	fd_set readfds,fd;
-
-	tv.tv_sec = 2;
-	tv.tv_usec = 500000;
-
-	FD_ZERO(&fd);
-	FD_SET(STDIN_FILENO, &fd);
-
-	uint8_t window = 1;
-	uint8_t seqnum = 0;
-	//TO DO Si pas de buffer, setter window a 0.
-	char data[512];
-	char* buffer = (char *) malloc(1024);
-	size_t len = 1024;
-
-	while(1){
-		readfds = fd;
-		int rd = -1;
-		if(select(sfd+1, &readfds, NULL, NULL, &tv) == -1){
-				fprintf(stderr, "sender(): erreur dans select\n "
-						"L'erreur est %s\n", strerror(errno));
-				exit(-1);
-		}
-		rd = read(STDIN_FILENO, data, 512);
-
-		if (rd == -1){
-				printf("Erreur de lecture.\n");
-				return EXIT_FAILURE;
-		}
-
-		pkt_t *pkt = pkt_new();
-		pkt_set_type(pkt, 1);
-		pkt_set_tr(pkt,0);
-		pkt_set_window(pkt, window);
-		pkt_set_seqnum(pkt, seqnum);
-		//pkt_set_length //Fait implicitement dans ce qui suit.
-		if (pkt_set_payload(pkt, data, rd) != PKT_OK){
-			pkt_set_tr(pkt, 1); //Tronquer le paquet
-		}
-
-		pkt_encode(pkt, buffer, &len);
-
-		//write(sfd, buffer, len);
-		if(write(sfd, buffer,len)<0){
-			fprintf(stderr, "sender(): Impossible d'envoyer le packet\n%s\n", strerror(errno));
-			return EXIT_FAILURE;
-		}
-		
-		if(pkt_get_length(pkt) == 0 && pkt_get_tr(pkt) == 0){
-			break; //Fin de la connexion.
-		}
-
-		seqnum = (seqnum+1)%256;
-		len = 1024;
-	}
-	return EXIT_SUCCESS;
-}
-
 int main(int argc, char *argv[]) {
 
 	if (argc < 3){
@@ -173,23 +74,75 @@ int main(int argc, char *argv[]) {
 	}
 	// fprinf(stdin, "Connection établie \n");
 
+	FILE *f = NULL;
 	if (file != NULL){
-		FILE *f = fopen(file, "rb");
+		f = fopen(file, "rb");
 		if (f == NULL) {
 			fprintf(stderr, "Erreur: impossible d'ouvrir le fichier de lecture.\n");
 			return EXIT_FAILURE;
 		}
+	}
+	
+	uint8_t window = 1;
+	uint8_t seqnum = 0;
+	char data[512];
+	char* buffer = (char *) malloc(1024);
+	size_t len = 1024;
+	//TO DO Si pas de buffer, setter window a 0.
+	
+	while(1){
+		
+		int rd = -1;
+		if (f != NULL){
+			rd = fread(data, 1, 512, f);
+		} else {
+			fd_set fd;
+			FD_ZERO(&fd);
+			FD_SET(STDIN_FILENO, &fd);
+			
+			if(select(sfd+1, &fd, NULL, NULL, NULL) == -1){
+				fprintf(stderr, "sender(): erreur dans select\n "
+						"L'erreur est %s\n", strerror(errno));
+				return EXIT_FAILURE;
+			}
+			rd = read(STDIN_FILENO, data, 512);
+		}
+		
+		if (rd == -1){
+				printf("Erreur de lecture.\n");
+				return EXIT_FAILURE;
+		}
 
-		sendfromFile(f,sfd);
+		pkt_t *pkt = pkt_new();
+		pkt_set_type(pkt, 1);
+		pkt_set_tr(pkt,0);
+		pkt_set_window(pkt, window);
+		pkt_set_seqnum(pkt, seqnum);
+		//pkt_set_length //Fait implicitement dans ce qui suit.
+		if (pkt_set_payload(pkt, data, rd) != PKT_OK){
+			pkt_set_tr(pkt, 1); //Tronquer le paquet
+		}
 
+		pkt_encode(pkt, buffer, &len);
+
+		if(write(sfd, buffer,len)<0){
+			fprintf(stderr, "sender(): Impossible d'envoyer le packet\n%s\n", strerror(errno));
+			return EXIT_FAILURE;
+		}
+		
+		if(pkt_get_length(pkt) == 0 && pkt_get_tr(pkt) == 0){
+			break; //Fin de la connexion.
+		}
+		
+		seqnum ++;
+		len = 1024;
+	}
+	
+	if (f != NULL){
 		if (fclose(f) == -1){
 			fprintf(stderr, "Erreur fermeture du fichier de lecture.\n");
 			return EXIT_FAILURE;
 		}
-	}
-	else {
-		return sendfromstdin(sfd);
-		//f = STDIN_FILENO;
 	}
 
 	return EXIT_SUCCESS;
