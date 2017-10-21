@@ -43,9 +43,9 @@ int sendfromFile(FILE *f, int sfd){
 		pkt_encode(pkt, buffer, &len);
 
 		//write(sfd, buffer, len);
-		if(write(sfd, buffer,len)){
+		if(write(sfd, buffer,len)<0){
 			fprintf(stderr, "sender(): Impossible d'envoyer le packet\n%s\n", strerror(errno));
-			exit(-1);
+			return EXIT_FAILURE;
 		}
 		seqnum ++;
 		len = 1024;
@@ -98,11 +98,12 @@ int sendfromstdin(int sfd){
 		pkt_encode(pkt, buffer, &len);
 
 		//write(sfd, buffer, len);
-		if(write(sfd, buffer,len)){
+		if(write(sfd, buffer,len)<0){
 			fprintf(stderr, "sender(): Impossible d'envoyer le packet\n%s\n", strerror(errno));
-			exit(-1);
+			return EXIT_FAILURE;
 		}
-		seqnum ++;
+
+		seqnum = (seqnum+1)%256;
 		len = 1024;
 	}
 	return EXIT_SUCCESS;
@@ -162,14 +163,14 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
+	addres = argv[optind];
 	errno = 0;
 	char *endptr;
-	port = strtold(argv[optind], &endptr);
+	port = strtold(argv[optind + 1], &endptr);
 	if (errno != 0 || argv[optind] == endptr){
 		printf("Port invalide: %s\n", argv[optind]);
 		return EXIT_FAILURE;
 	}
-	addres = argv[optind + 1];
 	printf("Port: %d\n", port);
 	printf("Addres: %s\n", addres);
 

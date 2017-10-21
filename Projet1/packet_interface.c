@@ -52,7 +52,7 @@ void pkt_del(pkt_t* pkt) {
  * - Le CRC32 du header recu est le même que celui decode a la fin
  *   du header (en considerant le champ TR a 0)
  * - S'il est present, le CRC32 du payload recu est le meme que celui
- *   decode a la fin du payload 
+ *   decode a la fin du payload
  * - Le type du paquet est valide
  * - La longueur du paquet et le champ TR sont valides et coherents
  *   avec le nombre d'octets recus.
@@ -71,7 +71,7 @@ pkt_status_code pkt_decode(const char *data, const size_t len, pkt_t *pkt) {
 		error = E_NOHEADER; //Paquet sans header
 		return error;
 	}
-	
+
 	//header
 	uint8_t header = *(data);
 	memcpy(pkt, &header, sizeof(uint8_t));
@@ -84,11 +84,11 @@ pkt_status_code pkt_decode(const char *data, const size_t len, pkt_t *pkt) {
 	if (pkt->window > MAX_WINDOW_SIZE){
 		return E_WINDOW;
 	}
-	
+
 	//seqnum
 	error = pkt_set_seqnum(pkt, *(data+1));
 	if (error != PKT_OK) return error;
-	
+
 	//Length
 	const uint16_t *data2 = (uint16_t *) data;
 	error = pkt_set_length(pkt, ntohs(*(data2+1)));
@@ -102,12 +102,12 @@ pkt_status_code pkt_decode(const char *data, const size_t len, pkt_t *pkt) {
 		error = E_UNCONSISTENT; //Longueur du paquet fantaisiste
 		return error;
 	}
-	
+
 	//Timestamp
 	const uint32_t* data3 = (uint32_t *) data;
 	error = pkt_set_timestamp(pkt, *(data3+1));
 	if (error != PKT_OK) return error;
-	
+
 	//CRC1
 	uint32_t crc1 = ntohl(*(data3+2));
 	char bytefield[8];
@@ -122,8 +122,8 @@ pkt_status_code pkt_decode(const char *data, const size_t len, pkt_t *pkt) {
 	}
 	error = pkt_set_crc1(pkt, crc1);
 	if (error != PKT_OK) return error;
-	
-	
+
+
 	//Payload
 	if (len == 12){ //Si paquet tronque, pas de payload a lire
 		return error;
@@ -131,7 +131,7 @@ pkt_status_code pkt_decode(const char *data, const size_t len, pkt_t *pkt) {
 	error = pkt_set_payload(pkt, data+12, pkt->length);
 	if (error != PKT_OK) return error;
 	//~ fprintf(stderr, "Payload1: %s\n", pkt_get_payload(pkt));
-	
+
 	//CRC2
 	//~ const uint32_t* data4 = ;
 	//~ fprintf(stderr, "CRC2: %x\n", *(data4));
@@ -140,15 +140,12 @@ pkt_status_code pkt_decode(const char *data, const size_t len, pkt_t *pkt) {
 	char bytefield2[pkt->length];
 	memcpy(bytefield2, data+12, pkt->length);
 	//~ fprintf(stderr, "Bytestream: %s\n", bytefield2);
-	fprintf(stderr, "CRC: %x\n", (uint32_t) crc32(0, (Bytef *) bytefield2, pkt->length));
 	uint32_t crc_ = crc32(0, (Bytef *) bytefield2, pkt->length);
-	fprintf(stderr, "CRC attendu: %x\n", crc2);
-	fprintf(stderr, "CRC obtenu: %x\n", crc_);
 	if(crc2 != crc_){
 		error = E_CRC; //Mauvais CRC
 		return error;
 	}
-	
+
 	return error;
 }
 
@@ -166,7 +163,7 @@ pkt_status_code pkt_decode(const char *data, const size_t len, pkt_t *pkt) {
  */
 pkt_status_code pkt_encode(const pkt_t* pkt, char *buf, size_t *len){
 	pkt_status_code error = PKT_OK;
-	
+
 	if (*len < 12){
 		*len = 0;
 		error = E_NOMEM; //Buffer trop petit
@@ -180,7 +177,7 @@ pkt_status_code pkt_encode(const pkt_t* pkt, char *buf, size_t *len){
 			return error;
 		}
 	}
-	
+
 	memcpy(buf, pkt, sizeof(uint8_t));
 	buf++;
 	uint8_t seqnum = pkt_get_seqnum(pkt);
@@ -192,7 +189,7 @@ pkt_status_code pkt_encode(const pkt_t* pkt, char *buf, size_t *len){
 	uint32_t timestamp = pkt_get_timestamp(pkt);
 	memcpy(buf, &timestamp, sizeof(uint32_t));
 	buf += 4;
-	
+
 	//CRC1
 	buf -= 8;
 	char bytefield[8];
@@ -201,16 +198,16 @@ pkt_status_code pkt_encode(const pkt_t* pkt, char *buf, size_t *len){
 	uint32_t crc1 = htonl(crc32(0, (Bytef *) bytefield, 8));
 	buf += 8;
 	memcpy(buf, &crc1, sizeof(uint32_t));
-	
+
 	if(pkt->length == 0){
 		*len = 12;
 		return error; //Paquet sans payload
 	}
-	
+
 	buf += 4;
 	memcpy(buf, pkt_get_payload(pkt), pkt->length);
 	//~ fprintf(stderr, "Payload1: %s\n", pkt_get_payload(pkt));
-	
+
 	//CRC2
 	char bytefield2[pkt->length];
 	memcpy(bytefield2, buf, pkt->length);
@@ -221,9 +218,8 @@ pkt_status_code pkt_encode(const pkt_t* pkt, char *buf, size_t *len){
 	//~ fprintf(stderr, "CRC2: %x\n", crc2);
 	buf += pkt->length;
 	memcpy(buf, &crc2, sizeof(uint32_t));
-	
+
 	*len = 16 + pkt->length;
-	fprintf(stderr, "Buffer: %x\n", ntohl(*((uint32_t *) buf)));
 	return error;
 }
 
