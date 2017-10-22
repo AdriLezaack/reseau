@@ -8,6 +8,11 @@
 #include "create_socket.h"
 #include "wait_for_client.h"
 
+#define BUFFER_SIZE 1024
+#define BUFFER_2_SIZE 50
+
+uint8_t INITIAL_WINDOW = 3; //Le nombre de paquet que l'on peut accepter
+
 
 #include <sys/time.h>
 #include <sys/types.h>
@@ -28,33 +33,26 @@ int main(int argc, char *argv[]){
 		switch (opt) {
 			case 'f':
 				file = optarg;
-				fprintf(stderr,"%s\n", optarg);
 				if (argc < 5){
-					fprintf(stderr,"Erreur: trop peu d'arguments.\n");
+					fprintf(stderr, "Erreur: trop peu d'arguments.\n");
 					return EXIT_FAILURE;
 				}
-				// printf("Option: %s\n", optarg);
 				break;
 			case '?':
-				 fprintf(stderr,"Pas d'option");
 				break;
 			default:
-				 fprintf(stderr,"Pas d'option 2");
 				break;
 		}
 	}
-	//~ file = "output";
+	
 	addres = argv[optind];
 	errno = 0;
 	char *endptr;
-	port = strtold(argv[optind + 1], &endptr);
-	if (errno != 0 || argv[optind] == endptr){
-		fprintf(stderr,"Port invalide: %s\n", argv[optind]);
+	port = strtold(argv[optind +1], &endptr);
+	if (errno != 0 || argv[optind+1] == endptr){
+		fprintf(stderr,"Port invalide: %s\n", argv[optind+1]);
 		return EXIT_FAILURE;
 	}
-
-	//~ printf("Port: %d\n", port);
-	//~ printf("Addres: %s\n", addres);
 
 	struct sockaddr_in6 addr;
 	const char *err = real_address(addres, &addr);
@@ -66,6 +64,11 @@ int main(int argc, char *argv[]){
 	int sfd;
 
 	sfd = create_socket(&addr, port, NULL, -1); /* Bound */
+	if (sfd > 0 && wait_for_client(sfd) < 0) { /* Connected */
+		fprintf(stderr, "Could not connect the socket after the first message.\n");
+		close(sfd);
+		return EXIT_FAILURE;
+	}
 
 	if (sfd < 0) {
 		fprintf(stderr, "Failed to create the socket!\n");
@@ -83,81 +86,188 @@ int main(int argc, char *argv[]){
 	}
 
 	struct timeval tv ;
-	tv.tv_sec = 20;
-	tv.tv_usec = 500000;
+	tv.tv_sec = 30;
+	tv.tv_usec = 0;
 
 	fd_set readfd, fd;
-	char buffer[1024];
 
 	/*on attend des données en entrée*/
 	FD_ZERO(&fd);
 	FD_SET(sfd,&fd);
 
-	uint8_t window = 1;
-	uint8_t seqnum = 0;
-	size_t len = 1024;
-//	int rd;
+	uint8_t window = INITIAL_WINDOW;
+	uint8_t seqnum = 0; //Le seqnum attendu. Toujours a 0 au début.
+	
+	size_t len = BUFFER_SIZE;
+	char buffer[BUFFER_SIZE];
+	
+	size_t len_2 = BUFFER_2_SIZE;
+	char buffer_2[BUFFER_2_SIZE];
+	
+	pkt_t *packets[MAX_WINDOW_SIZE];
+	int i;
+	for(i=0; i < MAX_WINDOW_SIZE ; i++){
+		packets[i] = NULL;
+	}
 
 	while(1){
-		size_t lenbuffer = 1024;
+		tv.tv_sec = 30;//
+		tv.tv_usec = 0;//
 		readfd = fd;
-		if(select(sfd+1, &readfd, NULL, NULL, &tv) == -1){
+		int sel = select(sfd+1, &readfd, NULL, NULL, &tv);
+		if(sel == -1){
 				fprintf(stderr, "read_write_loop.c: problème au niveau du select\n "
 						"L'erreur est %s\n", strerror(errno));
-				exit(-1);
+				return EXIT_FAILURE;
+		} else if (sel == 0){
+			//Deconnexion brutale (pas d'envoi pendant 30s).
+			break;
 		}
-
-		len = read(sfd,buffer,len);
+		
+		len = read(sfd, buffer, len);
 
 		pkt_t *pkt = pkt_new();
-		if (pkt_decode(buffer, len, pkt) == PKT_OK){
-			//Si le paquet est valide...
-			if (pkt_get_type(pkt) == 1){
-				//Si le type est 1...
-				if (pkt_get_seqnum(pkt) == seqnum){
-					//Si le packet a bien un seqnum attendu
-					fprintf(stderr,"Length: %d.\n", pkt_get_length(pkt));
-					if (pkt_get_length(pkt) == 0){
-						break; //Fin de la connexion.
+		if (pkt_decode(buffer, len, pkt) == PKT_OK && pkt_get_type(pkt) == 1){
+			//Si le paquet est valide et son type est 1...
+			uint8_t p_seqnum = pkt_get_seqnum(pkt);
+			int make_ack = -1;
+			if (p_seqnum == seqnum){
+				//Si le packet a bien le seqnum attendu
+				if (pkt_get_length(pkt) == 0){
+					pkt_del(pkt);
+					break; //Fin de la connexion.
+				}
+				int j;
+				int k = 0;
+				if (window == 0){ //Debloque-toi!
+					int wri = -1;
+					if (f != NULL) {
+						wri = fwrite(pkt_get_payload(pkt), 1, pkt_get_length(pkt), f);
+					} else {
+						wri = write(STDOUT_FILENO, pkt_get_payload(pkt), pkt_get_length(pkt));
 					}
-					pkt_t *ack = pkt_new();
-					if (pkt_get_tr(pkt) == 0){
-						//Si le paquet a un payload...
+					if(wri < 0) {
+						fprintf(stderr,"Erreur d'ecriture.\n");
+						return EXIT_FAILURE;
+					}
+					pkt_del(pkt);
+					seqnum = (seqnum+1)%256;
+					make_ack = seqnum;
+				} else {
+					packets[0] = pkt;
+				}
+				for (j=0; j<window; j++){
+					if (packets[j] != NULL && k == 0){
+						//Le paquet est bon, lis-le.
 						int wr = -1;
 						if (f != NULL) {
-							wr = fwrite(pkt_get_payload(pkt), 1, pkt_get_length(pkt), f);
+							wr = fwrite(pkt_get_payload(packets[j]), 1, pkt_get_length(packets[j]), f);
 						} else {
-							wr = write(STDOUT_FILENO, pkt_get_payload(pkt), pkt_get_length(pkt));
+							wr = write(STDOUT_FILENO, pkt_get_payload(packets[j]), pkt_get_length(packets[j]));
 						}
 						if(wr < 0) {
 							fprintf(stderr,"Erreur d'ecriture.\n");
 							return EXIT_FAILURE;
 						}
-						//Envoit un ack
-						pkt_set_type(ack, 2);
-						pkt_set_tr(ack, 0);
-						pkt_set_window(ack, window);
-						pkt_set_seqnum(ack, pkt_get_seqnum(pkt) + 1);
+						pkt_del(packets[j]);
+						//packets[j] = NULL; //Fait par le else et la boucle en l.
+						seqnum = (seqnum+1)%256;
+						make_ack = seqnum;
 					} else {
-						//Sinon envoit un non-ack
-						pkt_set_type(ack, 3);
-						pkt_set_tr(ack, 0);
-						pkt_set_window(ack, window);
-						pkt_set_seqnum(ack, pkt_get_seqnum(pkt));
+						//Bouge-toi.
+						packets[k] = packets[j];
+						k++;
 					}
-					pkt_encode(ack, buffer, &lenbuffer); //E_Nomem
-/*					if(write(sfd,buffer,lenbuffer) < 0){
-						fprintf(stderr, "Erreur d'ecriture sur le sfd\n");
-						return EXIT_FAILURE;
-					}*/
 				}
+				int l;
+				for(l = k; l<window; l++){
+					packets[l] = NULL;
+				}
+				
+			} else if ((p_seqnum > seqnum && p_seqnum < seqnum + window) || (p_seqnum < seqnum && p_seqnum < (seqnum+window)%256)){
+				//Paquet acceptable.
+				int offset = 0;
+				if (p_seqnum > seqnum) offset = p_seqnum - seqnum;
+				if (p_seqnum < seqnum) offset = 256 + p_seqnum - seqnum;
+				if (packets[offset] != NULL){
+					//S'il n'a pas deja ete recu.
+					packets[offset] = pkt;
+				}
+				make_ack = seqnum;
+			} else {
+				//Hors sequence. A ignorer.
+				pkt_del(pkt);
+				make_ack = -1;
 			}
+			if(make_ack >= 0){
+				uint8_t newWindow = pkt_get_window(pkt);
+				if(newWindow < window){
+					int n;
+					for (n=newWindow; n<window; n++){
+						if (packets[n] != NULL){
+							pkt_del(packets[n]);
+						}
+					}
+					window = newWindow;
+				}
+				if(window < newWindow && window < INITIAL_WINDOW){
+					if (INITIAL_WINDOW < newWindow){
+						newWindow = INITIAL_WINDOW;
+					}
+					window = newWindow;
+				}
+				pkt_t *ack = pkt_new();
+				if (pkt_get_tr(pkt) == 0){
+					//Si le paquet a un payload...
+					//Envoit un ack
+					pkt_set_type(ack, 2);
+					pkt_set_tr(ack, 0);
+					pkt_set_window(ack, INITIAL_WINDOW);
+					pkt_set_seqnum(ack, make_ack);
+					pkt_set_timestamp(ack, pkt_get_timestamp(pkt));
+				} else {
+					//Sinon envoit un non-ack
+					pkt_set_type(ack, 3);
+					pkt_set_tr(ack, 0);
+					pkt_set_window(ack, INITIAL_WINDOW);
+					pkt_set_seqnum(ack, p_seqnum);
+					pkt_set_timestamp(ack, pkt_get_timestamp(pkt));
+				}
+				pkt_encode(ack, buffer_2, &len_2); //TO DO: E_Nomem
+				
+				if(write(sfd, buffer_2, len_2) < 0){
+					fprintf(stderr, "Erreur lors de l'envoi du ack.\n");
+					fprintf(stderr, "L'erreur est %s\n", strerror(errno));
+					return EXIT_FAILURE;
+				}
+				if(INITIAL_WINDOW == 0){ //Si INITIAL_WINDOW nulle...
+					len_2 = BUFFER_SIZE;
+					while(INITIAL_WINDOW == 0){
+						//Attendre qu'un autre thread met INITIAL_WINDOW > 0
+					}
+					pkt_set_window(ack, INITIAL_WINDOW);
+					pkt_encode(ack, buffer_2, &len_2); //TO DO: E_Nomem
+					if(write(sfd, buffer_2, len_2) < 0){
+						fprintf(stderr, "Erreur lors de l'envoi du ack.\n");
+						fprintf(stderr, "L'erreur est %s\n", strerror(errno));
+						return EXIT_FAILURE;
+					}
+				}
+				pkt_del(ack);
+				len_2 = BUFFER_SIZE;
+			}//if ack
+		} else {
+			//Si non valide, ignore-le.
+			pkt_del(pkt);
 		}
-		//Sinon ignore-le.
-
-		len = 1024;
-		lenbuffer = 1024;
-		seqnum = (seqnum+1)%256;
+		len = BUFFER_SIZE;
+	}
+	
+	int m;
+	for(m=0; m < MAX_WINDOW_SIZE; m++){
+		if (packets[m] != NULL){
+			pkt_del(packets[m]);
+		}
 	}
 	
 	if (f != NULL){
