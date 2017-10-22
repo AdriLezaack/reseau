@@ -12,6 +12,8 @@
 #include <sys/time.h>
 #include <sys/types.h>
 
+#include <time.h>
+
 #define STDIN 0  // file descriptor for standard input
 
 int main(int argc, char *argv[]) {
@@ -34,13 +36,10 @@ int main(int argc, char *argv[]) {
 					fprintf(stderr, "Erreur: trop peu d'arguments.\n");
 					return EXIT_FAILURE;
 				}
-				//~ printf("Option: %s\n", optarg);
 				break;
 			case '?':
-				//~ printf("Pas d'option");
 				break;
 			default:
-				//~ printf("Pas d'option");
 				break;
 		}
 	}
@@ -49,13 +48,11 @@ int main(int argc, char *argv[]) {
 	errno = 0;
 	char *endptr;
 	port = strtold(argv[optind + 1], &endptr);
-	if (errno != 0 || argv[optind] == endptr){
-		fprintf(stderr, "Port invalide: %s\n", argv[optind]);
+	if (errno != 0 || argv[optind+1] == endptr){
+		fprintf(stderr, "Port invalide: %s\n", argv[optind+1]);
 		return EXIT_FAILURE;
 	}
-	//~ printf("Port: %d\n", port);
-	//~ printf("Addres: %s\n", addres);
-
+	
 	/* Resolve the hostname */
 	struct sockaddr_in6 addr;
 	const char *err = real_address(addres, &addr);
@@ -72,7 +69,6 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "Failed to create the socket!\n");
 		return EXIT_FAILURE;
 	}
-	// fprinf(stdin, "Connection établie \n");
 
 	FILE *f = NULL;
 	if (file != NULL){
@@ -82,62 +78,133 @@ int main(int argc, char *argv[]) {
 			return EXIT_FAILURE;
 		}
 	}
-	
+
 	uint8_t window = 1;
 	uint8_t seqnum = 0;
 	char data[512];
-	char* buffer = (char *) malloc(1024);
+	char buffer[1024];
+	pkt_t** buffers = malloc(sizeof(struct pkt_t*)*256);
+
+	int i;
+	for(i=0;i<256;i++)
+		buffers[i] = NULL;
+
 	size_t len = 1024;
-	//TO DO Si pas de buffer, setter window a 0.
-	
+
+	int disposfd=window;
+	int dispobuf=3;
+	int lastack = -1;
+	int finbuf = 0;
+
 	while(1){
-		
-		int rd = -1;
-		if (f != NULL){
-			rd = fread(data, 1, 512, f);
-		} else {
+		if((dispobuf>0)&&(!finbuf)){
+			int rd = -1;
+			if (f != NULL){
+				rd = fread(data, 1, 512, f);
+			} else {
+				fd_set fd;
+				FD_ZERO(&fd);
+				FD_SET(STDIN_FILENO, &fd);
+				if(select(sfd+1, &fd, NULL, NULL, NULL) == -1){
+					fprintf(stderr, "sender(): erreur dans select\n "
+							"L'erreur est %s\n", strerror(errno));
+					return EXIT_FAILURE;
+				}
+				rd = read(STDIN_FILENO, data, 512);
+			}
+			if (rd == -1){
+					fprintf(stderr, "Erreur de lecture.\n");
+					return EXIT_FAILURE;
+			}
+			pkt_t *pkt = pkt_new();
+			pkt_set_type(pkt, 1);
+			pkt_set_tr(pkt,0);
+			pkt_set_window(pkt, 31);
+			pkt_set_seqnum(pkt, seqnum);
+
+			if (pkt_set_payload(pkt, data, rd) != PKT_OK){
+				pkt_set_tr(pkt, 1); //Tronquer le paquet
+			}
+
+			if(buffers[seqnum]!=NULL)
+				pkt_del(buffers[seqnum]);
+
+			buffers[seqnum]=pkt;
+			dispobuf--;
+			if(pkt_get_length(pkt)==0){
+				finbuf=1;
+				pkt_set_window(pkt,0);
+			}
+			seqnum = (seqnum+1)%256;
+
+		}
+
+		if((disposfd>0)&&(dispobuf>0)){
+			int j;
+			for(j=0; (j!=disposfd)&&(j!=(seqnum-lastack-1+256)%256);j++){
+				pkt_encode(buffers[(lastack+1+j)%256], buffer, &len); //-1
+				if(write(sfd, buffer,len)<0){
+					fprintf(stderr, "sender(): Impossible d'envoyer le packet\n%s\n", strerror(errno));
+					return EXIT_FAILURE;
+				}
+				pkt_set_timestamp(buffers[(lastack+1+j)%256],(uint32_t)(clock()/CLOCKS_PER_SEC));
+			}
+			disposfd-=j;
+			dispobuf+=j;
+		}
+
+		// On renvoie les segments non acquittés
+		for(i=(lastack+1)%256;i!=(seqnum-finbuf+256)%256;i=(i+1)%256){
 			fd_set fd;
 			FD_ZERO(&fd);
-			FD_SET(STDIN_FILENO, &fd);
-			
-			if(select(sfd+1, &fd, NULL, NULL, NULL) == -1){
-				fprintf(stderr, "sender(): erreur dans select\n "
-						"L'erreur est %s\n", strerror(errno));
-				return EXIT_FAILURE;
+			FD_SET(sfd, &fd);
+			struct timeval tv;
+			tv.tv_sec=0;
+			tv.tv_usec=(clock()/CLOCKS_PER_SEC-pkt_get_timestamp(buffers[i]))*1000;
+			if(select(sfd+1, &fd, NULL, NULL, &tv) == 1){
+				pkt_encode(buffers[i], buffer, &len);
+				if(write(sfd, buffer,len)<0){
+					fprintf(stderr, "sender(): Impossible d'envoyer le packet\n%s\n", strerror(errno));
+					return EXIT_FAILURE;
+				}
+				pkt_set_timestamp(buffers[i],(uint32_t)clock()/CLOCKS_PER_SEC);
 			}
-			rd = read(STDIN_FILENO, data, 512);
-		}
-		
-		if (rd == -1){
-				printf("Erreur de lecture.\n");
-				return EXIT_FAILURE;
+			else{
+				char ack[1024];
+				len = read(sfd,ack,1024);
+				// Traite l'ack
+				pkt_t *pkt = pkt_new();
+				if (pkt_decode(ack, len, pkt) == PKT_OK)
+					if(pkt_get_type(pkt) == 2){
+					 	lastack = (pkt_get_seqnum(pkt)-1+256)%256;
+					 	window = pkt_get_window(pkt);
+		        disposfd = window - ((seqnum-1 - lastack)+256)%256;
+					}
+					if(pkt_get_type(pkt) == 3){
+						int tronc = (pkt_get_seqnum(pkt)-1+256)%256;
+						if (((seqnum < lastack) && ((tronc < lastack) == (tronc < seqnum))) ||
+								((seqnum > lastack) && ((tronc > lastack) && (tronc < seqnum)))){
+									window /= 2;
+									if(window == 0)
+											window = 1;
+									disposfd = window - ((seqnum-1 - lastack)+256)%256;
+								}
+
+					}
+			}
 		}
 
-		pkt_t *pkt = pkt_new();
-		pkt_set_type(pkt, 1);
-		pkt_set_tr(pkt,0);
-		pkt_set_window(pkt, window);
-		pkt_set_seqnum(pkt, seqnum);
-		//pkt_set_length //Fait implicitement dans ce qui suit.
-		if (pkt_set_payload(pkt, data, rd) != PKT_OK){
-			pkt_set_tr(pkt, 1); //Tronquer le paquet
-		}
-
-		pkt_encode(pkt, buffer, &len);
-
-		if(write(sfd, buffer,len)<0){
-			fprintf(stderr, "sender(): Impossible d'envoyer le packet\n%s\n", strerror(errno));
-			return EXIT_FAILURE;
-		}
-		
-		if(pkt_get_length(pkt) == 0 && pkt_get_tr(pkt) == 0){
-			break; //Fin de la connexion.
-		}
-		
-		seqnum ++;
+		if(finbuf && dispobuf)
+			break;
 		len = 1024;
 	}
-	
+
+
+	for(i=0;i<256;i++)
+		if(buffers[i]!=NULL)
+			pkt_del(buffers[i]);
+	free(buffers);
+
 	if (f != NULL){
 		if (fclose(f) == -1){
 			fprintf(stderr, "Erreur fermeture du fichier de lecture.\n");
